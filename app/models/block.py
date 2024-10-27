@@ -8,12 +8,14 @@ class Block(BaseModel):
     Each block contains metadata, a reference to a medical record, and information
     required to maintain blockchain integrity, such as hashes and validator information.
     """
+
+    id: str
     
     index: int
     """int: The position of the block in the blockchain (starting from 1)."""
 
-    timestamp: datetime
-    """datetime: The time when the block was created. Automatically set to the current UTC time."""
+    timestamp: str
+    """str: The time when the block was created. Automatically set to the current UTC time."""
 
     patient_id: str
     """str: A unique identifier for the patient associated with this block."""
@@ -40,5 +42,4 @@ class Block(BaseModel):
         Args:
             **data: Arbitrary keyword arguments containing the block's attributes.
         """
-        data['timestamp'] = datetime.now(timezone.utc)
         super().__init__(**data)

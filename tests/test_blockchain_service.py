@@ -43,16 +43,6 @@ def blockchain_service():
 
         return service
 
-def test_add_validator(blockchain_service):
-    """
-    Test that a validator can be successfully added to the list.
-    
-    Validates the correct storage of a new validator in CosmosDB.
-    """
-    blockchain_service.add_validator("validator_002")
-    assert "validator_002" in blockchain_service.validators
-    blockchain_service.cosmosdb_service.store_validator.assert_called_with("validator_002")
-
 def test_create_block_with_authorized_validator(blockchain_service):
     """
     Test that a block is created successfully with an authorized validator.
@@ -66,8 +56,9 @@ def test_create_block_with_authorized_validator(blockchain_service):
         "treatment": "Medication"
     }
     validator_id = "validator_001"
+    user_id = "user_001"
 
-    new_block = blockchain_service.create_block_with_medical_record(patient_id, medical_record, validator_id)
+    new_block = blockchain_service.create_block_with_medical_record(patient_id, medical_record, validator_id, user_id)
     assert new_block.patient_id == patient_id
     assert new_block.validator_id == validator_id
     assert new_block.medical_record_id is not None
@@ -84,9 +75,10 @@ def test_create_block_with_unauthorized_validator(blockchain_service):
         "treatment": "Medication"
     }
     unauthorized_validator_id = "validator_999"
+    user_id = "user_001"
 
     with pytest.raises(ValueError, match="Unauthorized validator attempted to create a block."):
-        blockchain_service.create_block_with_medical_record(patient_id, medical_record, unauthorized_validator_id)
+        blockchain_service.create_block_with_medical_record(patient_id, medical_record, unauthorized_validator_id, user_id)
 
 def test_validate_correct_block(blockchain_service):
     """

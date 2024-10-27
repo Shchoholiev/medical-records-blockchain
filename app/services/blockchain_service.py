@@ -1,9 +1,13 @@
+import logging
 from datetime import datetime, timezone
 from typing import List
+import uuid
 from app.models.block import Block
 from app.services.cosmosdb_service import CosmosDBService
 import hashlib
 import json
+
+logger = logging.getLogger(__name__)
 
 class BlockchainService:
     def __init__(self):
@@ -13,10 +17,12 @@ class BlockchainService:
         This service is responsible for managing the blockchain, including adding
         validators, creating blocks, validating blocks, and interacting with CosmosDB.
         """
+        logger.info("Initializing BlockchainService.")
         self.cosmosdb_service = CosmosDBService()
         self.validators: List[str] = self.cosmosdb_service.get_validators()
-    
-    def add_validator(self, validator_id: str):
+        logger.info(f"Loaded validators: {self.validators}")
+
+    def add_validator(self, validator_id: str, name: str):
         """
         Add a new validator to the list of authorized validators.
         
@@ -26,11 +32,17 @@ class BlockchainService:
         Args:
             validator_id (str): The unique identifier of the validator.
         """
+        logger.info(f"Attempting to add validator: {validator_id}")
         if validator_id not in self.validators:
-            if self.cosmosdb_service.store_validator(validator_id):
+            if self.cosmosdb_service.store_validator(validator_id, name):
                 self.validators.append(validator_id)
-    
-    def create_block_with_medical_record(self, patient_id: str, medical_record: dict, validator_id: str) -> Block:
+                logger.info(f"Validator {validator_id} added successfully.")
+            else:
+                logger.error(f"Failed to store validator {validator_id}.")
+        else:
+            logger.info(f"Validator {validator_id} already exists.")
+
+    def create_block_with_medical_record(self, patient_id: str, medical_record: dict, validator_id: str, user_id: str) -> Block:
         """
         Create a new block that references a stored medical record.
         
@@ -50,37 +62,51 @@ class BlockchainService:
             ValueError: If the validator is not authorized.
             Exception: If the new block cannot be stored in the blockchain.
         """
+        logger.info(f"Creating a block for patient {patient_id} by validator {validator_id}.")
         if validator_id not in self.validators:
+            logger.error(f"Unauthorized validator {validator_id} attempted to create a block.")
             raise ValueError("Unauthorized validator attempted to create a block.")
         
+        medical_record['created_date_utc'] = datetime.now(timezone.utc).isoformat()
+        medical_record['created_by_id'] = user_id
+        
         medical_record_id = self.cosmosdb_service.store_medical_record(medical_record)
+        logger.info(f"Medical record stored with ID: {medical_record_id}")
         
         last_block = self.get_last_block()
-        # If there's no last block, this is the genesis block
         previous_hash = last_block['hash'] if last_block else "0"
         
+        timestamp = datetime.now(timezone.utc).isoformat()
         hash_value = self.compute_block_hash(
             index=(last_block['index'] + 1) if last_block else 1,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=timestamp,
             patient_id=patient_id,
             medical_record_id=medical_record_id,
             medical_record=medical_record,
             previous_hash=previous_hash,
             validator_id=validator_id
         )
+        logger.info(f"Created hash")
+
+        logger.info(medical_record)
         
         new_block = Block(
+            id=str(uuid.uuid4()),
             index=(last_block['index'] + 1) if last_block else 1,
+            timestamp=timestamp,
             patient_id=patient_id,
             medical_record_id=medical_record_id,
             previous_hash=previous_hash,
             validator_id=validator_id,
             hash=hash_value
         )
+        logger.info(f"Saving block")
         
         if self.cosmosdb_service.store_block(new_block.model_dump()):
+            logger.info(f"New block created and stored successfully: {new_block}")
             return new_block
         else:
+            logger.error("Failed to store the new block in the blockchain.")
             raise Exception("Failed to store the new block in the blockchain.")
     
     def compute_block_hash(self, index, timestamp, patient_id, medical_record_id, medical_record, previous_hash, validator_id) -> str:
@@ -99,12 +125,15 @@ class BlockchainService:
         Returns:
             str: The computed SHA-256 hash of the block's contents.
         """
+        logger.debug("Computing hash for a block.")
         medical_record_string = json.dumps(medical_record, sort_keys=True)
         block_string = (
             f"{index}{timestamp}{patient_id}{medical_record_id}"
             f"{medical_record_string}{previous_hash}{validator_id}"
         )
-        return hashlib.sha256(block_string.encode()).hexdigest()
+        hash_value = hashlib.sha256(block_string.encode()).hexdigest()
+        logger.debug(f"Computed hash: {hash_value}")
+        return hash_value
     
     def get_last_block(self) -> dict:
         """
@@ -113,9 +142,12 @@ class BlockchainService:
         Returns:
             dict: The last block's data from CosmosDB, or None if the blockchain is empty.
         """
+        logger.info("Retrieving the last block from the blockchain.")
         query = "SELECT * FROM c ORDER BY c.index DESC OFFSET 0 LIMIT 1"
         items = list(self.cosmosdb_service.blockchain_container.query_items(query=query, enable_cross_partition_query=True))
-        return items[0] if items else None
+        last_block = items[0] if items else None
+        logger.info(f"Last block retrieved: {last_block}")
+        return last_block
     
     def get_blockchain(self) -> List[Block]:
         """
@@ -124,8 +156,10 @@ class BlockchainService:
         Returns:
             List[Block]: A list of all blocks in the blockchain, ordered by their index.
         """
+        logger.info("Retrieving the full blockchain.")
         query = "SELECT * FROM c ORDER BY c.index ASC"
         items = list(self.cosmosdb_service.blockchain_container.query_items(query=query, enable_cross_partition_query=True))
+        logger.info(f"Blockchain retrieved with {len(items)} blocks.")
         return [Block(**item) for item in items]
     
     def validate_block(self, block: Block) -> bool:
@@ -138,7 +172,9 @@ class BlockchainService:
         Returns:
             bool: True if the block is valid, False otherwise.
         """
+        logger.info(f"Validating block with index {block.index}.")
         medical_record = self.cosmosdb_service.get_medical_record(block.medical_record_id)
+        logger.info(medical_record)
         recomputed_hash = self.compute_block_hash(
             index=block.index,
             timestamp=block.timestamp,
@@ -148,7 +184,9 @@ class BlockchainService:
             previous_hash=block.previous_hash,
             validator_id=block.validator_id
         )
-        return recomputed_hash == block.hash
+        is_valid = recomputed_hash == block.hash
+        logger.info(f"Block validation result: {'valid' if is_valid else 'invalid'}.")
+        return is_valid
     
     def validate_blockchain(self) -> bool:
         """
@@ -160,6 +198,7 @@ class BlockchainService:
         Returns:
             bool: True if the entire blockchain is valid, False otherwise.
         """
+        logger.info("Validating the entire blockchain.")
         blockchain = self.get_blockchain()
         
         for i in range(1, len(blockchain)):
@@ -167,9 +206,12 @@ class BlockchainService:
             previous_block = blockchain[i - 1]
             
             if not self.validate_block(current_block):
+                logger.error(f"Block {current_block.index} failed validation.")
                 return False
             
             if current_block.previous_hash != previous_block.hash:
+                logger.error(f"Block {current_block.index} has an incorrect previous hash.")
                 return False
         
+        logger.info("Blockchain validation completed successfully.")
         return True
