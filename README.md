@@ -5,3 +5,7 @@ Blockchain implementation for securely storing medical data, ensuring data integ
 `
 uvicorn app.main:app --reload
 `
+
+`
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+`
